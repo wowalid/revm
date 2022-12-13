@@ -1,76 +1,76 @@
-use crate::{gas, interpreter::Interpreter, Host, Return, Spec, SpecId::*, U256};
+use crate::{gas, interpreter::Interpreter, Return, Spec, SpecId::*};
+use primitive_types::U256;
 
-pub fn jump(interpreter: &mut Interpreter, _host: &mut dyn Host) {
+pub fn jump(interp: &mut Interpreter) -> Return {
     // gas!(interp, gas::MID);
-    pop!(interpreter, dest);
-    let dest = as_usize_or_fail!(interpreter, dest, Return::InvalidJump);
-    if interpreter.contract.is_valid_jump(dest) {
+    pop!(interp, dest);
+    let dest = as_usize_or_fail!(dest, Return::InvalidJump);
+    if interp.contract.is_valid_jump(dest) {
         // Safety: In analysis we are checking create our jump table and we do check above to be
         // sure that jump is safe to execute.
-        interpreter.instruction_pointer =
-            unsafe { interpreter.contract.bytecode.as_ptr().add(dest) };
+        interp.instruction_pointer = unsafe { interp.contract.bytecode.as_ptr().add(dest) };
+        Return::Continue
     } else {
-        interpreter.instruction_result = Return::InvalidJump;
+        Return::InvalidJump
     }
 }
 
-pub fn jumpi(interpreter: &mut Interpreter, _host: &mut dyn Host) {
+pub fn jumpi(interp: &mut Interpreter) -> Return {
     // gas!(interp, gas::HIGH);
-    pop!(interpreter, dest, value);
-    if value != U256::ZERO {
-        let dest = as_usize_or_fail!(interpreter, dest, Return::InvalidJump);
-        if interpreter.contract.is_valid_jump(dest) {
+    pop!(interp, dest, value);
+    if !value.is_zero() {
+        let dest = as_usize_or_fail!(dest, Return::InvalidJump);
+        if interp.contract.is_valid_jump(dest) {
             // Safety: In analysis we are checking if jump is valid destination and
             // this `if` makes this unsafe block safe.
-            interpreter.instruction_pointer =
-                unsafe { interpreter.contract.bytecode.as_ptr().add(dest) };
+            interp.instruction_pointer = unsafe { interp.contract.bytecode.as_ptr().add(dest) };
+            Return::Continue
         } else {
-            interpreter.instruction_result = Return::InvalidJump
+            Return::InvalidJump
         }
-    } else if let Some(ret) = interpreter.add_next_gas_block(interpreter.program_counter() - 1) {
-        // if we are not doing jump, add next gas block.
-        interpreter.instruction_result = ret;
-    }
-}
-
-pub fn jumpdest(interpreter: &mut Interpreter, _host: &mut dyn Host) {
-    gas!(interpreter, gas::JUMPDEST);
-    if let Some(ret) = interpreter.add_next_gas_block(interpreter.program_counter() - 1) {
-        interpreter.instruction_result = ret;
-    }
-}
-
-pub fn pc(interpreter: &mut Interpreter, _host: &mut dyn Host) {
-    // gas!(interp, gas::BASE);
-    push!(interpreter, U256::from(interpreter.program_counter() - 1));
-}
-
-pub fn ret(interpreter: &mut Interpreter, _host: &mut dyn Host) {
-    // zero gas cost gas!(interp,gas::ZERO);
-    pop!(interpreter, start, len);
-    let len = as_usize_or_fail!(interpreter, len, Return::OutOfGas);
-    if len == 0 {
-        interpreter.return_range = usize::MAX..usize::MAX;
     } else {
-        let offset = as_usize_or_fail!(interpreter, start, Return::OutOfGas);
-        memory_resize!(interpreter, offset, len);
-        interpreter.return_range = offset..(offset + len);
+        // if we are not doing jump, add next gas block.
+        interp.add_next_gas_block(interp.program_counter() - 1)
     }
-    interpreter.instruction_result = Return::Return;
 }
 
-pub fn revert<SPEC: Spec>(interpreter: &mut Interpreter, _host: &mut dyn Host) {
+pub fn jumpdest(interp: &mut Interpreter) -> Return {
+    gas!(interp, gas::JUMPDEST);
+    interp.add_next_gas_block(interp.program_counter() - 1)
+}
+
+pub fn pc(interp: &mut Interpreter) -> Return {
+    // gas!(interp, gas::BASE);
+    push!(interp, U256::from(interp.program_counter() - 1));
+    Return::Continue
+}
+
+pub fn ret(interp: &mut Interpreter) -> Return {
+    // zero gas cost gas!(interp,gas::ZERO);
+    pop!(interp, start, len);
+    let len = as_usize_or_fail!(len, Return::OutOfGas);
+    if len == 0 {
+        interp.return_range = usize::MAX..usize::MAX;
+    } else {
+        let offset = as_usize_or_fail!(start, Return::OutOfGas);
+        memory_resize!(interp, offset, len);
+        interp.return_range = offset..(offset + len);
+    }
+    Return::Return
+}
+
+pub fn revert<SPEC: Spec>(interp: &mut Interpreter) -> Return {
     // zero gas cost gas!(interp,gas::ZERO);
     // EIP-140: REVERT instruction
-    check!(interpreter, SPEC::enabled(BYZANTIUM));
-    pop!(interpreter, start, len);
-    let len = as_usize_or_fail!(interpreter, len, Return::OutOfGas);
+    check!(SPEC::enabled(BYZANTIUM));
+    pop!(interp, start, len);
+    let len = as_usize_or_fail!(len, Return::OutOfGas);
     if len == 0 {
-        interpreter.return_range = usize::MAX..usize::MAX;
+        interp.return_range = usize::MAX..usize::MAX;
     } else {
-        let offset = as_usize_or_fail!(interpreter, start, Return::OutOfGas);
-        memory_resize!(interpreter, offset, len);
-        interpreter.return_range = offset..(offset + len);
+        let offset = as_usize_or_fail!(start, Return::OutOfGas);
+        memory_resize!(interp, offset, len);
+        interp.return_range = offset..(offset + len);
     }
-    interpreter.instruction_result = Return::Revert;
+    Return::Revert
 }

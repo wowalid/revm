@@ -33,10 +33,6 @@ pub struct Interpreter {
     pub return_data_buffer: Bytes,
     /// Return value.
     pub return_range: Range<usize>,
-    /// Return is main control flag, it tell us if we should continue interpreter or break from it
-    pub instruction_result: Return,
-    /// Is interpreter call static.
-    pub is_static: bool,
     /// Memory limit. See [`crate::CfgEnv`].
     #[cfg(feature = "memory_limit")]
     pub memory_limit: u64,
@@ -47,7 +43,7 @@ impl Interpreter {
         unsafe { *self.instruction_pointer }
     }
     #[cfg(not(feature = "memory_limit"))]
-    pub fn new<SPEC: Spec>(contract: Contract, gas_limit: u64, is_static: bool) -> Self {
+    pub fn new<SPEC: Spec>(contract: Contract, gas_limit: u64) -> Self {
         Self {
             instruction_pointer: contract.bytecode.as_ptr(),
             return_range: Range::default(),
@@ -55,8 +51,6 @@ impl Interpreter {
             stack: Stack::new(),
             return_data_buffer: Bytes::new(),
             contract,
-            instruction_result: Return::Continue,
-            is_static,
             gas: Gas::new(gas_limit),
         }
     }
@@ -65,7 +59,6 @@ impl Interpreter {
     pub fn new_with_memory_limit<SPEC: Spec>(
         contract: Contract,
         gas_limit: u64,
-        is_static: bool,
         memory_limit: u64,
     ) -> Self {
         Self {
@@ -75,8 +68,6 @@ impl Interpreter {
             stack: Stack::new(),
             return_data_buffer: Bytes::new(),
             contract,
-            instruction_result: Return::Continue,
-            is_static,
             gas: Gas::new(gas_limit),
             memory_limit,
         }
@@ -95,15 +86,14 @@ impl Interpreter {
         &self.stack
     }
 
-    #[inline(always)]
-    pub fn add_next_gas_block(&mut self, pc: usize) -> Option<Return> {
+    pub fn add_next_gas_block(&mut self, pc: usize) -> Return {
         if USE_GAS {
             let gas_block = self.contract.gas_block(pc);
             if !self.gas.record_cost(gas_block) {
-                return Some(Return::OutOfGas);
+                return Return::OutOfGas;
             }
         }
-        None
+        Return::Continue
     }
 
     /// Return a reference of the program counter.
@@ -116,43 +106,36 @@ impl Interpreter {
     }
 
     /// loop steps until we are finished with execution
-    pub fn run<H: Host, SPEC: Spec>(&mut self, host: &mut H, inspect: bool) -> Return {
+    pub fn run<H: Host, SPEC: Spec>(&mut self, host: &mut H) -> Return {
         //let timer = std::time::Instant::now();
+        let mut ret = Return::Continue;
         // add first gas_block
         if USE_GAS && !self.gas.record_cost(self.contract.first_gas_block()) {
             return Return::OutOfGas;
         }
-        if inspect {
-            while self.instruction_result == Return::Continue {
-                // step
-                let ret = host.step(self, self.is_static);
-                if ret != Return::Continue {
-                    return ret;
-                }
-                let opcode = unsafe { *self.instruction_pointer };
-                // Safety: In analysis we are doing padding of bytecode so that we are sure that last.
-                // byte instruction is STOP so we are safe to just increment program_counter bcs on last instruction
-                // it will do noop and just stop execution of this contract
-                self.instruction_pointer = unsafe { self.instruction_pointer.offset(1) };
-                eval::<H, SPEC>(opcode, self, host);
-
-                let ret = host.step_end(self, self.is_static, self.instruction_result);
+        while ret == Return::Continue {
+            // step
+            if H::INSPECT {
+                let ret = host.step(self, SPEC::IS_STATIC_CALL);
                 if ret != Return::Continue {
                     return ret;
                 }
             }
-        } else {
-            while self.instruction_result == Return::Continue {
-                // step.
-                let opcode = unsafe { *self.instruction_pointer };
-                // Safety: In analysis we are doing padding of bytecode so that we are sure that last.
-                // byte instruction is STOP so we are safe to just increment program_counter bcs on last instruction
-                // it will do noop and just stop execution of this contract
-                self.instruction_pointer = unsafe { self.instruction_pointer.offset(1) };
-                eval::<H, SPEC>(opcode, self, host);
+            let opcode = unsafe { *self.instruction_pointer };
+            // Safety: In analysis we are doing padding of bytecode so that we are sure that last.
+            // byte instruction is STOP so we are safe to just increment program_counter bcs on last instruction
+            // it will do noop and just stop execution of this contract
+            self.instruction_pointer = unsafe { self.instruction_pointer.offset(1) };
+            ret = eval::<H, SPEC>(opcode, self, host);
+
+            if H::INSPECT {
+                let ret = host.step_end(self, SPEC::IS_STATIC_CALL, ret);
+                if ret != Return::Continue {
+                    return ret;
+                }
             }
         }
-        self.instruction_result
+        ret
     }
 
     /// Copy and get the return value of the interp, if any.

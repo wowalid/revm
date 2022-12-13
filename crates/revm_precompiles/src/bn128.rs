@@ -1,63 +1,52 @@
-use crate::{Error, Precompile, PrecompileAddress, PrecompileResult, B160};
-use alloc::vec::Vec;
-use ruint::aliases::U256;
+use crate::{gas_query, Precompile, PrecompileOutput, PrecompileResult, Return};
+
+use alloc::{borrow::Cow, vec::Vec};
+use primitive_types::{H160 as Address, U256};
 
 pub mod add {
     use super::*;
-    const ADDRESS: B160 = crate::u64_to_b160(6);
+    const ADDRESS: Address = crate::make_address(0, 6);
 
-    pub const ISTANBUL: PrecompileAddress = PrecompileAddress(
+    pub const ISTANBUL: (Address, Precompile) = (
         ADDRESS,
         Precompile::Standard(|input: &[u8], target_gas: u64| -> PrecompileResult {
-            if 150 > target_gas {
-                return Err(Error::OutOfGas);
-            }
-            Ok((150, super::run_add(input)?))
+            super::run_add(input, 150, target_gas)
         }),
     );
 
-    pub const BYZANTIUM: PrecompileAddress = PrecompileAddress(
+    pub const BYZANTIUM: (Address, Precompile) = (
         ADDRESS,
         Precompile::Standard(|input: &[u8], target_gas: u64| -> PrecompileResult {
-            if 500 > target_gas {
-                return Err(Error::OutOfGas);
-            }
-            Ok((500, super::run_add(input)?))
+            super::run_add(input, 500, target_gas)
         }),
     );
 }
 
 pub mod mul {
     use super::*;
-    const ADDRESS: B160 = crate::u64_to_b160(7);
-    pub const ISTANBUL: PrecompileAddress = PrecompileAddress(
+    const ADDRESS: Address = crate::make_address(0, 7);
+    pub const ISTANBUL: (Address, Precompile) = (
         ADDRESS,
-        Precompile::Standard(|input: &[u8], gas_limit: u64| -> PrecompileResult {
-            if 6_000 > gas_limit {
-                return Err(Error::OutOfGas);
-            }
-            Ok((6_000, super::run_mul(input)?))
+        Precompile::Standard(|input: &[u8], target_gas: u64| -> PrecompileResult {
+            super::run_mul(input, 6_000, target_gas)
         }),
     );
 
-    pub const BYZANTIUM: PrecompileAddress = PrecompileAddress(
+    pub const BYZANTIUM: (Address, Precompile) = (
         ADDRESS,
-        Precompile::Standard(|input: &[u8], gas_limit: u64| -> PrecompileResult {
-            if 40_000 > gas_limit {
-                return Err(Error::OutOfGas);
-            }
-            Ok((40_000, super::run_mul(input)?))
+        Precompile::Standard(|input: &[u8], target_gas: u64| -> PrecompileResult {
+            super::run_mul(input, 40_000, target_gas)
         }),
     );
 }
 
 pub mod pair {
     use super::*;
-    const ADDRESS: B160 = crate::u64_to_b160(8);
+    const ADDRESS: Address = crate::make_address(0, 8);
 
     const ISTANBUL_PAIR_PER_POINT: u64 = 34_000;
     const ISTANBUL_PAIR_BASE: u64 = 45_000;
-    pub const ISTANBUL: PrecompileAddress = PrecompileAddress(
+    pub const ISTANBUL: (Address, Precompile) = (
         ADDRESS,
         Precompile::Standard(|input: &[u8], target_gas: u64| -> PrecompileResult {
             super::run_pair(
@@ -71,7 +60,7 @@ pub mod pair {
 
     const BYZANTIUM_PAIR_PER_POINT: u64 = 80_000;
     const BYZANTIUM_PAIR_BASE: u64 = 100_000;
-    pub const BYZANTIUM: PrecompileAddress = PrecompileAddress(
+    pub const BYZANTIUM: (Address, Precompile) = (
         ADDRESS,
         Precompile::Standard(|input: &[u8], target_gas: u64| -> PrecompileResult {
             super::run_pair(
@@ -94,27 +83,31 @@ const MUL_INPUT_LEN: usize = 128;
 const PAIR_ELEMENT_LEN: usize = 192;
 
 /// Reads the `x` and `y` points from an input at a given position.
-fn read_point(input: &[u8], pos: usize) -> Result<bn::G1, Error> {
+fn read_point(input: &[u8], pos: usize) -> Result<bn::G1, Return> {
     use bn::{AffineG1, Fq, Group, G1};
 
     let mut px_buf = [0u8; 32];
     px_buf.copy_from_slice(&input[pos..(pos + 32)]);
-    let px = Fq::from_slice(&px_buf).map_err(|_| Error::Bn128FieldPointNotAMember)?;
+    let px = Fq::from_slice(&px_buf)
+        .map_err(|_e| Return::Other(Cow::Borrowed("ERR_BN128_INVALID_X")))?;
 
     let mut py_buf = [0u8; 32];
     py_buf.copy_from_slice(&input[(pos + 32)..(pos + 64)]);
-    let py = Fq::from_slice(&py_buf).map_err(|_| Error::Bn128FieldPointNotAMember)?;
+    let py = Fq::from_slice(&py_buf)
+        .map_err(|_e| Return::Other(Cow::Borrowed("ERR_BN128_INVALID_Y")))?;
 
-    if px == Fq::zero() && py == bn::Fq::zero() {
-        Ok(G1::zero())
+    Ok(if px == Fq::zero() && py == bn::Fq::zero() {
+        G1::zero()
     } else {
         AffineG1::new(px, py)
-            .map(Into::into)
-            .map_err(|_| Error::Bn128AffineGFailedToCreate)
-    }
+            .map_err(|_| Return::Other(Cow::Borrowed("ERR_BN128_INVALID_POINT")))?
+            .into()
+    })
 }
 
-fn run_add(input: &[u8]) -> Result<Vec<u8>, Error> {
+fn run_add(input: &[u8], cost: u64, target_gas: u64) -> PrecompileResult {
+    let cost = gas_query(cost, target_gas)?;
+
     use bn::AffineG1;
 
     let mut input = input.to_vec();
@@ -135,10 +128,11 @@ fn run_add(input: &[u8]) -> Result<Vec<u8>, Error> {
             .unwrap();
     }
 
-    Ok(output.into())
+    Ok(PrecompileOutput::without_logs(cost, output.to_vec()))
 }
 
-fn run_mul(input: &[u8]) -> Result<Vec<u8>, Error> {
+fn run_mul(input: &[u8], cost: u64, target_gas: u64) -> PrecompileResult {
+    let cost = gas_query(cost, target_gas)?;
     use bn::AffineG1;
 
     let mut input = input.to_vec();
@@ -148,8 +142,8 @@ fn run_mul(input: &[u8]) -> Result<Vec<u8>, Error> {
 
     let mut fr_buf = [0u8; 32];
     fr_buf.copy_from_slice(&input[64..96]);
-    // Fr::from_slice can only fail on incorect length, and this is not a case.
-    let fr = bn::Fr::from_slice(&fr_buf[..]).unwrap();
+    let fr = bn::Fr::from_slice(&fr_buf[..])
+        .map_err(|_| Return::Other(Cow::Borrowed("Invalid field element")))?;
 
     let mut out = [0u8; 64];
     if let Some(mul) = AffineG1::from_jacobian(p * fr) {
@@ -157,56 +151,70 @@ fn run_mul(input: &[u8]) -> Result<Vec<u8>, Error> {
         mul.y().to_big_endian(&mut out[32..]).unwrap();
     }
 
-    Ok(out.to_vec())
+    Ok(PrecompileOutput::without_logs(cost, out.to_vec()))
 }
 
 fn run_pair(
     input: &[u8],
     pair_per_point_cost: u64,
     pair_base_cost: u64,
-    gas_limit: u64,
+    target_gas: u64,
 ) -> PrecompileResult {
-    let gas_used =
-        pair_per_point_cost * input.len() as u64 / PAIR_ELEMENT_LEN as u64 + pair_base_cost;
-    if gas_used > gas_limit {
-        return Err(Error::OutOfGas);
-    }
+    let cost = pair_per_point_cost * input.len() as u64 / PAIR_ELEMENT_LEN as u64 + pair_base_cost;
+    let cost = gas_query(cost, target_gas)?;
 
     use bn::{AffineG1, AffineG2, Fq, Fq2, Group, Gt, G1, G2};
 
     if input.len() % PAIR_ELEMENT_LEN != 0 {
-        return Err(Error::Bn128PairLength);
+        return Err(Return::Other(Cow::Borrowed("ERR_BN128_INVALID_LEN")));
     }
 
     let output = if input.is_empty() {
-        U256::from(1)
+        U256::one()
     } else {
         let elements = input.len() / PAIR_ELEMENT_LEN;
         let mut vals = Vec::with_capacity(elements);
 
-        const PEL: usize = PAIR_ELEMENT_LEN;
-
         for idx in 0..elements {
             let mut buf = [0u8; 32];
 
-            buf.copy_from_slice(&input[(idx * PEL)..(idx * PEL + 32)]);
-            let ax = Fq::from_slice(&buf).map_err(|_| Error::Bn128FieldPointNotAMember)?;
-            buf.copy_from_slice(&input[(idx * PEL + 32)..(idx * PEL + 64)]);
-            let ay = Fq::from_slice(&buf).map_err(|_| Error::Bn128FieldPointNotAMember)?;
-            buf.copy_from_slice(&input[(idx * PEL + 64)..(idx * PEL + 96)]);
-            let bay = Fq::from_slice(&buf).map_err(|_| Error::Bn128FieldPointNotAMember)?;
-            buf.copy_from_slice(&input[(idx * PEL + 96)..(idx * PEL + 128)]);
-            let bax = Fq::from_slice(&buf).map_err(|_| Error::Bn128FieldPointNotAMember)?;
-            buf.copy_from_slice(&input[(idx * PEL + 128)..(idx * PEL + 160)]);
-            let bby = Fq::from_slice(&buf).map_err(|_| Error::Bn128FieldPointNotAMember)?;
-            buf.copy_from_slice(&input[(idx * PEL + 160)..(idx * PEL + 192)]);
-            let bbx = Fq::from_slice(&buf).map_err(|_| Error::Bn128FieldPointNotAMember)?;
+            buf.copy_from_slice(&input[(idx * PAIR_ELEMENT_LEN)..(idx * PAIR_ELEMENT_LEN + 32)]);
+            let ax = Fq::from_slice(&buf)
+                .map_err(|_e| Return::Other(Cow::Borrowed("ERR_BN128_INVALID_AX")))?;
+            buf.copy_from_slice(
+                &input[(idx * PAIR_ELEMENT_LEN + 32)..(idx * PAIR_ELEMENT_LEN + 64)],
+            );
+            let ay = Fq::from_slice(&buf)
+                .map_err(|_e| Return::Other(Cow::Borrowed("ERR_BN128_INVALID_AY")))?;
+            buf.copy_from_slice(
+                &input[(idx * PAIR_ELEMENT_LEN + 64)..(idx * PAIR_ELEMENT_LEN + 96)],
+            );
+            let bay = Fq::from_slice(&buf)
+                .map_err(|_e| Return::Other(Cow::Borrowed("ERR_BN128_INVALID_B_AY")))?;
+            buf.copy_from_slice(
+                &input[(idx * PAIR_ELEMENT_LEN + 96)..(idx * PAIR_ELEMENT_LEN + 128)],
+            );
+            let bax = Fq::from_slice(&buf)
+                .map_err(|_e| Return::Other(Cow::Borrowed("ERR_BN128_INVALID_B_AX")))?;
+            buf.copy_from_slice(
+                &input[(idx * PAIR_ELEMENT_LEN + 128)..(idx * PAIR_ELEMENT_LEN + 160)],
+            );
+            let bby = Fq::from_slice(&buf)
+                .map_err(|_e| Return::Other(Cow::Borrowed("ERR_BN128_INVALID_B_BY")))?;
+            buf.copy_from_slice(
+                &input[(idx * PAIR_ELEMENT_LEN + 160)..(idx * PAIR_ELEMENT_LEN + 192)],
+            );
+            let bbx = Fq::from_slice(&buf)
+                .map_err(|_e| Return::Other(Cow::Borrowed("ERR_BN128_INVALID_B_BX")))?;
 
             let a = {
                 if ax.is_zero() && ay.is_zero() {
                     G1::zero()
                 } else {
-                    G1::from(AffineG1::new(ax, ay).map_err(|_| Error::Bn128AffineGFailedToCreate)?)
+                    G1::from(
+                        AffineG1::new(ax, ay)
+                            .map_err(|_e| Return::Other(Cow::Borrowed("ERR_BN128_INVALID_A")))?,
+                    )
                 }
             };
             let b = {
@@ -216,7 +224,10 @@ fn run_pair(
                 if ba.is_zero() && bb.is_zero() {
                     G2::zero()
                 } else {
-                    G2::from(AffineG2::new(ba, bb).map_err(|_| Error::Bn128AffineGFailedToCreate)?)
+                    G2::from(
+                        AffineG2::new(ba, bb)
+                            .map_err(|_e| Return::Other(Cow::Borrowed("ERR_BN128_INVALID_B")))?,
+                    )
                 }
             };
             vals.push((a, b))
@@ -227,13 +238,16 @@ fn run_pair(
             .fold(Gt::one(), |s, (a, b)| s * bn::pairing(a, b));
 
         if mul == Gt::one() {
-            U256::from(1)
+            U256::one()
         } else {
-            U256::ZERO
+            U256::zero()
         }
     };
 
-    Ok((gas_used, output.to_be_bytes_vec()))
+    let mut buf = [0u8; 32];
+    output.to_big_endian(&mut buf);
+
+    Ok(PrecompileOutput::without_logs(cost, buf.to_vec()))
 }
 
 /*

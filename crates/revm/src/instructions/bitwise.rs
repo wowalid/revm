@@ -1,135 +1,91 @@
-use super::i256::{i256_cmp, i256_sign, two_compl, Sign};
-use crate::{Host, Interpreter, Return, Spec, SpecId::CONSTANTINOPLE, U256};
 use core::cmp::Ordering;
-use std::ops::{BitAnd, BitOr, BitXor};
 
-pub fn lt(interpreter: &mut Interpreter, _host: &mut dyn Host) {
-    pop_top!(interpreter, op1, op2);
-    *op2 = if op1.lt(op2) {
-        U256::from(1)
-    } else {
-        U256::ZERO
-    };
-}
+use super::i256::{i256_cmp, i256_sign, two_compl, Sign};
+use primitive_types::U256;
 
-pub fn gt(interpreter: &mut Interpreter, _host: &mut dyn Host) {
-    pop_top!(interpreter, op1, op2);
-    *op2 = if op1.gt(op2) {
-        U256::from(1)
+pub fn slt(op1: U256, op2: U256) -> U256 {
+    if i256_cmp(op1, op2) == Ordering::Less {
+        U256::one()
     } else {
-        U256::ZERO
-    };
-}
-
-pub fn slt(interpreter: &mut Interpreter, _host: &mut dyn Host) {
-    pop_top!(interpreter, op1, op2);
-    *op2 = if i256_cmp(op1, *op2) == Ordering::Less {
-        U256::from(1)
-    } else {
-        U256::ZERO
+        U256::zero()
     }
 }
 
-pub fn sgt(interpreter: &mut Interpreter, _host: &mut dyn Host) {
-    pop_top!(interpreter, op1, op2);
-    *op2 = if i256_cmp(op1, *op2) == Ordering::Greater {
-        U256::from(1)
+pub fn sgt(op1: U256, op2: U256) -> U256 {
+    if i256_cmp(op1, op2) == Ordering::Greater {
+        U256::one()
     } else {
-        U256::ZERO
-    };
+        U256::zero()
+    }
 }
 
-pub fn eq(interpreter: &mut Interpreter, _host: &mut dyn Host) {
-    pop_top!(interpreter, op1, op2);
-    *op2 = if op1.eq(op2) {
-        U256::from(1)
+pub fn iszero(op1: U256) -> U256 {
+    if op1.is_zero() {
+        U256::one()
     } else {
-        U256::ZERO
-    };
+        U256::zero()
+    }
 }
 
-pub fn iszero(interpreter: &mut Interpreter, _host: &mut dyn Host) {
-    pop_top!(interpreter, op1);
-    *op1 = if *op1 == U256::ZERO {
-        U256::from(1)
-    } else {
-        U256::ZERO
-    };
-}
-pub fn bitand(interpreter: &mut Interpreter, _host: &mut dyn Host) {
-    pop_top!(interpreter, op1, op2);
-    *op2 = op1.bitand(*op2);
-}
-pub fn bitor(interpreter: &mut Interpreter, _host: &mut dyn Host) {
-    pop_top!(interpreter, op1, op2);
-    *op2 = op1.bitor(*op2);
-}
-pub fn bitxor(interpreter: &mut Interpreter, _host: &mut dyn Host) {
-    pop_top!(interpreter, op1, op2);
-    *op2 = op1.bitxor(*op2);
+pub fn not(op1: U256) -> U256 {
+    !op1
 }
 
-pub fn not(interpreter: &mut Interpreter, _host: &mut dyn Host) {
-    pop_top!(interpreter, op1);
-    *op1 = !*op1;
-}
-
-pub fn byte(interpreter: &mut Interpreter, _host: &mut dyn Host) {
-    pop_top!(interpreter, op1, op2);
-    let mut ret = U256::ZERO;
+pub fn byte(op1: U256, op2: U256) -> U256 {
+    let mut ret = U256::zero();
 
     for i in 0..256 {
-        if i < 8 && op1 < U256::from(32) {
-            let o = as_usize_saturated!(op1);
+        if i < 8 && op1 < 32.into() {
+            let o: usize = op1.as_usize();
             let t = 255 - (7 - i + 8 * o);
-            let bit_mask = U256::from(1) << t;
-            let value = (*op2 & bit_mask) >> t;
+            let bit_mask = U256::one() << t;
+            let value = (op2 & bit_mask) >> t;
             ret = ret.overflowing_add(value << i).0;
         }
     }
 
-    *op2 = ret;
+    ret
 }
 
-pub fn shl<SPEC: Spec>(interpreter: &mut Interpreter, _host: &mut dyn Host) {
-    // EIP-145: Bitwise shifting instructions in EVM
-    check!(interpreter, SPEC::enabled(CONSTANTINOPLE));
-    pop_top!(interpreter, op1, op2);
-    *op2 <<= as_usize_saturated!(op1);
+pub fn shl(shift: U256, value: U256) -> U256 {
+    if value.is_zero() || shift >= U256::from(256) {
+        U256::zero()
+    } else {
+        let shift: u64 = shift.as_u64();
+        value << shift as usize
+    }
 }
 
-pub fn shr<SPEC: Spec>(interpreter: &mut Interpreter, _host: &mut dyn Host) {
-    // EIP-145: Bitwise shifting instructions in EVM
-    check!(interpreter, SPEC::enabled(CONSTANTINOPLE));
-    pop_top!(interpreter, op1, op2);
-    *op2 >>= as_usize_saturated!(op1);
+pub fn shr(shift: U256, value: U256) -> U256 {
+    if value.is_zero() || shift >= U256::from(256) {
+        U256::zero()
+    } else {
+        let shift: u64 = shift.as_u64();
+        value >> shift as usize
+    }
 }
 
-pub fn sar<SPEC: Spec>(interpreter: &mut Interpreter, _host: &mut dyn Host) {
-    // EIP-145: Bitwise shifting instructions in EVM
-    check!(interpreter, SPEC::enabled(CONSTANTINOPLE));
-    pop_top!(interpreter, op1, op2);
+pub fn sar(shift: U256, mut value: U256) -> U256 {
+    let value_sign = i256_sign::<true>(&mut value);
 
-    let value_sign = i256_sign::<true>(op2);
-
-    *op2 = if *op2 == U256::ZERO || op1 >= U256::from(256) {
+    if value.is_zero() || shift >= U256::from(256) {
         match value_sign {
             // value is 0 or >=1, pushing 0
-            Sign::Plus | Sign::Zero => U256::ZERO,
+            Sign::Plus | Sign::Zero => U256::zero(),
             // value is <0, pushing -1
-            Sign::Minus => two_compl(U256::from(1)),
+            Sign::Minus => two_compl(U256::one()),
         }
     } else {
-        let shift = usize::try_from(op1).unwrap();
+        let shift: u64 = shift.as_u64();
 
         match value_sign {
-            Sign::Plus | Sign::Zero => *op2 >> shift,
+            Sign::Plus | Sign::Zero => value >> shift as usize,
             Sign::Minus => {
-                let shifted = ((op2.overflowing_sub(U256::from(1)).0) >> shift)
-                    .overflowing_add(U256::from(1))
+                let shifted = ((value.overflowing_sub(U256::one()).0) >> shift as usize)
+                    .overflowing_add(U256::one())
                     .0;
                 two_compl(shifted)
             }
         }
-    };
+    }
 }

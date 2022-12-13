@@ -1,8 +1,9 @@
-use crate::{alloc::vec::Vec, U256};
+use crate::alloc::vec::Vec;
 use core::{
     cmp::min,
     ops::{BitAnd, Not},
 };
+use primitive_types::U256;
 
 /// A sequencial memory. It uses Rust's `Vec` for internal
 /// representation.
@@ -73,7 +74,7 @@ impl Memory {
 
     #[inline(always)]
     pub fn set_u256(&mut self, index: usize, value: U256) {
-        self.data[index..index + 32].copy_from_slice(&value.to_be_bytes::<{ U256::BYTES }>());
+        value.to_big_endian(&mut self.data[index..index + 32])
     }
 
     /// Set memory region at given offset. The offset and value are already checked

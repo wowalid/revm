@@ -1,17 +1,13 @@
 use core::cmp::min;
 
-use crate::{
-    alloc::vec::Vec,
-    bits::{B160, B256},
-    interpreter::bytecode::Bytecode,
-    Return, SpecId, U256,
-};
+use crate::{alloc::vec::Vec, interpreter::bytecode::Bytecode, Return, SpecId};
 use bytes::Bytes;
-use hex_literal::hex;
+use primitive_types::{H160, H256, U256};
 
-pub const KECCAK_EMPTY: B256 = B256(hex!(
-    "c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"
-));
+pub const KECCAK_EMPTY: H256 = H256([
+    0xc5, 0xd2, 0x46, 0x01, 0x86, 0xf7, 0x23, 0x3c, 0x92, 0x7e, 0x7d, 0xb2, 0xdc, 0xc7, 0x03, 0xc0,
+    0xe5, 0x00, 0xb6, 0x53, 0xca, 0x82, 0x27, 0x3b, 0x7b, 0xfa, 0xd8, 0x04, 0x5d, 0x85, 0xa4, 0x70,
+]);
 
 /// AccountInfo account information.
 #[derive(Clone, Debug, Eq)]
@@ -22,7 +18,7 @@ pub struct AccountInfo {
     /// Account nonce.
     pub nonce: u64,
     /// code hash,
-    pub code_hash: B256,
+    pub code_hash: H256,
     /// code: if None, `code_by_hash` will be used to fetch it if code needs to be loaded from
     /// inside of revm.
     pub code: Option<Bytecode>,
@@ -31,7 +27,7 @@ pub struct AccountInfo {
 impl Default for AccountInfo {
     fn default() -> Self {
         Self {
-            balance: U256::ZERO,
+            balance: U256::zero(),
             code_hash: KECCAK_EMPTY,
             code: Some(Bytecode::new()),
             nonce: 0,
@@ -59,8 +55,8 @@ impl AccountInfo {
     }
 
     pub fn is_empty(&self) -> bool {
-        let code_empty = self.code_hash == KECCAK_EMPTY || self.code_hash == B256::zero();
-        self.balance == U256::ZERO && self.nonce == 0 && code_empty
+        let code_empty = self.code_hash == KECCAK_EMPTY || self.code_hash.is_zero();
+        self.balance.is_zero() && self.nonce == 0 && code_empty
     }
 
     pub fn exists(&self) -> bool {
@@ -79,7 +75,7 @@ impl AccountInfo {
 #[cfg_attr(feature = "with-serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CallInputs {
     /// The target of the call.
-    pub contract: B160,
+    pub contract: H160,
     /// The transfer, if any, in this call.
     pub transfer: Transfer,
     /// The call data of the call.
@@ -89,13 +85,11 @@ pub struct CallInputs {
     pub gas_limit: u64,
     /// The context of the call.
     pub context: CallContext,
-    /// Is static call
-    pub is_static: bool,
 }
 
 #[cfg_attr(feature = "with-serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CreateInputs {
-    pub caller: B160,
+    pub caller: H160,
     pub scheme: CreateScheme,
     pub value: U256,
     #[cfg_attr(feature = "with-serde", serde(with = "serde_hex_bytes"))]
@@ -108,7 +102,7 @@ pub struct CreateData {}
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "with-serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum TransactTo {
-    Call(B160),
+    Call(H160),
     Create(CreateScheme),
 }
 
@@ -126,7 +120,7 @@ pub enum TransactOut {
     Call(Bytes),
     Create(
         #[cfg_attr(feature = "with-serde", serde(with = "serde_hex_bytes"))] Bytes,
-        Option<B160>,
+        Option<H160>,
     ),
 }
 
@@ -162,11 +156,11 @@ pub enum CallScheme {
 #[cfg_attr(feature = "with-serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CallContext {
     /// Execution address.
-    pub address: B160,
+    pub address: H160,
     /// Caller of the EVM.
-    pub caller: B160,
+    pub caller: H160,
     /// The address the contract code was loaded from, if any.
-    pub code_address: B160,
+    pub code_address: H160,
     /// Apparent value of the EVM.
     pub apparent_value: U256,
     /// The scheme used for the call.
@@ -176,9 +170,9 @@ pub struct CallContext {
 impl Default for CallContext {
     fn default() -> Self {
         CallContext {
-            address: B160::default(),
-            caller: B160::default(),
-            code_address: B160::default(),
+            address: H160::default(),
+            caller: H160::default(),
+            code_address: H160::default(),
             apparent_value: U256::default(),
             scheme: CallScheme::Call,
         }
@@ -198,13 +192,9 @@ pub struct BlockEnv {
     pub number: U256,
     /// Coinbase or miner or address that created and signed the block.
     /// Address where we are going to send gas spend
-    pub coinbase: B160,
+    pub coinbase: H160,
     pub timestamp: U256,
-    /// Difficulty is removed and not used after Paris (aka TheMerge). Value is replaced with prevrandao.
     pub difficulty: U256,
-    /// Prevrandao is used after Paris (aka TheMerge) instead of the difficulty value.
-    /// NOTE: prevrandao can be found in block in place of mix_hash.
-    pub prevrandao: Option<B256>,
     /// basefee is added in EIP1559 London upgrade
     pub basefee: U256,
     pub gas_limit: U256,
@@ -214,7 +204,7 @@ pub struct BlockEnv {
 #[cfg_attr(feature = "with-serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TxEnv {
     /// Caller or Author or tx signer
-    pub caller: B160,
+    pub caller: H160,
     pub gas_limit: u64,
     pub gas_price: U256,
     pub gas_priority_fee: Option<U256>,
@@ -224,7 +214,7 @@ pub struct TxEnv {
     pub data: Bytes,
     pub chain_id: Option<u64>,
     pub nonce: Option<u64>,
-    pub access_list: Vec<(B160, Vec<U256>)>,
+    pub access_list: Vec<(H160, Vec<U256>)>,
 }
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "with-serde", derive(serde::Serialize, serde::Deserialize))]
@@ -250,21 +240,11 @@ pub struct CfgEnv {
     /// EIP-1985.
     #[cfg(feature = "memory_limit")]
     pub memory_limit: u64,
-    /// There are use cases where it's allowed to provide a gas limit that's higher than a block's gas limit. To that
-    /// end, you can disable the block gas limit validation.
-    /// By default, it is set to `false`.
-    #[cfg(feature = "optional_block_gas_limit")]
-    pub disable_block_gas_limit: bool,
     /// EIP-3607 rejects transactions from senders with deployed code. In development, it can be desirable to simulate
     /// calls from contracts, which this setting allows.
     /// By default, it is set to `false`.
     #[cfg(feature = "optional_eip3607")]
     pub disable_eip3607: bool,
-    /// Disables all gas refunds. This is useful when using chains that have gas refunds disabled e.g. Avalanche.
-    /// Reasoning behind removing gas refunds can be found in EIP-3298.
-    /// By default, it is set to `false`.
-    #[cfg(feature = "optional_gas_refund")]
-    pub disable_gas_refund: bool,
 }
 
 #[derive(Clone, Default, Debug, Eq, PartialEq)]
@@ -279,19 +259,15 @@ pub enum AnalysisKind {
 impl Default for CfgEnv {
     fn default() -> CfgEnv {
         CfgEnv {
-            chain_id: U256::from(1),
+            chain_id: 1.into(),
             spec_id: SpecId::LATEST,
             perf_all_precompiles_have_balance: false,
             perf_analyse_created_bytecodes: Default::default(),
             limit_contract_code_size: None,
             #[cfg(feature = "memory_limit")]
             memory_limit: 2u64.pow(32) - 1,
-            #[cfg(feature = "optional_block_gas_limit")]
-            disable_block_gas_limit: false,
             #[cfg(feature = "optional_eip3607")]
             disable_eip3607: false,
-            #[cfg(feature = "optional_gas_refund")]
-            disable_gas_refund: false,
         }
     }
 }
@@ -300,12 +276,11 @@ impl Default for BlockEnv {
     fn default() -> BlockEnv {
         BlockEnv {
             gas_limit: U256::MAX,
-            number: U256::ZERO,
-            coinbase: B160::zero(),
-            timestamp: U256::from(1),
-            difficulty: U256::ZERO,
-            prevrandao: Some(B256::zero()),
-            basefee: U256::ZERO,
+            number: 0.into(),
+            coinbase: H160::zero(),
+            timestamp: U256::one(),
+            difficulty: U256::zero(),
+            basefee: U256::zero(),
         }
     }
 }
@@ -313,12 +288,12 @@ impl Default for BlockEnv {
 impl Default for TxEnv {
     fn default() -> TxEnv {
         TxEnv {
-            caller: B160::zero(),
+            caller: H160::zero(),
             gas_limit: u64::MAX,
-            gas_price: U256::ZERO,
+            gas_price: U256::zero(),
             gas_priority_fee: None,
-            transact_to: TransactTo::Call(B160::zero()), //will do nothing
-            value: U256::ZERO,
+            transact_to: TransactTo::Call(H160::zero()), //will do nothing
+            value: U256::zero(),
             data: Bytes::new(),
             chain_id: None,
             nonce: None,
@@ -345,9 +320,9 @@ impl Env {
 #[cfg_attr(feature = "with-serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Transfer {
     /// Source address.
-    pub source: B160,
+    pub source: H160,
     /// Target address.
-    pub target: B160,
+    pub target: H160,
     /// Transfer value.
     pub value: U256,
 }
@@ -355,8 +330,8 @@ pub struct Transfer {
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "with-serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Log {
-    pub address: B160,
-    pub topics: Vec<B256>,
+    pub address: H160,
+    pub topics: Vec<H256>,
     #[cfg_attr(feature = "with-serde", serde(with = "serde_hex_bytes"))]
     pub data: Bytes,
 }

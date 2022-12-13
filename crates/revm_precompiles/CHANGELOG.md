@@ -1,8 +1,3 @@
-# v1.1.2
-date: 22.11.2022
-
-Bump dependency versions.
-
 # v1.1.1
 date: 06.09.2022
 

@@ -1,7 +1,6 @@
-use crate::{
-    interpreter::bytecode::Bytecode, AccountInfo, Database, B160, B256, KECCAK_EMPTY, U256,
-};
+use crate::{interpreter::bytecode::Bytecode, AccountInfo, Database, KECCAK_EMPTY};
 use bytes::Bytes;
+use primitive_types::{H160, H256, U256};
 use tokio::runtime::{Handle, Runtime};
 use web3::{
     transports::Http,
@@ -51,8 +50,8 @@ impl Web3DB {
 impl Database for Web3DB {
     type Error = ();
 
-    fn basic(&mut self, address: B160) -> Result<Option<AccountInfo>, Self::Error> {
-        let add = wH160::from(address.0);
+    fn basic(&mut self, address: H160) -> Result<Option<AccountInfo>, Self::Error> {
+        let add = wH160(address.0);
         let f = async {
             let nonce = self.web3.eth().transaction_count(add, self.block_number);
             let balance = self.web3.eth().balance(add, self.block_number);
@@ -62,29 +61,33 @@ impl Database for Web3DB {
         let (nonce, balance, code) = self.block_on(f);
         // panic on not getting data?
         Ok(Some(AccountInfo::new(
-            U256::from_limbs(
+            U256(
                 balance
-                    .unwrap_or_else(|e| panic!("web3 get balance error:{e:?}"))
+                    .unwrap_or_else(|e| panic!("web3 get balance error:{:?}", e))
                     .0,
             ),
             nonce
-                .unwrap_or_else(|e| panic!("web3 get nonce error:{e:?}"))
+                .unwrap_or_else(|e| panic!("web3 get nonce error:{:?}", e))
                 .as_u64(),
             Bytecode::new_raw(Bytes::from(
-                code.unwrap_or_else(|e| panic!("web3 get node error:{e:?}"))
+                code.unwrap_or_else(|e| panic!("web3 get node error:{:?}", e))
                     .0,
             )),
         )))
     }
 
-    fn code_by_hash(&mut self, _code_hash: B256) -> Result<Bytecode, Self::Error> {
+    fn code_by_hash(&mut self, _code_hash: primitive_types::H256) -> Result<Bytecode, Self::Error> {
         panic!("Should not be called. Code is already loaded");
         // not needed because we already load code with basic info
     }
 
-    fn storage(&mut self, address: B160, index: U256) -> Result<U256, Self::Error> {
-        let add = wH160::from(address.0);
-        let index = wU256(*index.as_limbs());
+    fn storage(
+        &mut self,
+        address: primitive_types::H160,
+        index: primitive_types::U256,
+    ) -> Result<primitive_types::U256, Self::Error> {
+        let add = wH160(address.0);
+        let index = wU256(index.0);
         let f = async {
             let storage = self
                 .web3
@@ -92,17 +95,26 @@ impl Database for Web3DB {
                 .storage(add, index, self.block_number)
                 .await
                 .unwrap();
-            U256::from_be_bytes(storage.to_fixed_bytes())
+            U256::from_big_endian(storage.as_bytes())
         };
         Ok(self.block_on(f))
     }
 
-    fn block_hash(&mut self, number: U256) -> Result<B256, Self::Error> {
-        // saturate usize
+    fn block_hash(
+        &mut self,
+        number: primitive_types::U256,
+    ) -> Result<primitive_types::H256, Self::Error> {
         if number > U256::from(u64::MAX) {
             return Ok(KECCAK_EMPTY);
         }
-        let number = wU64::from(u64::try_from(number).unwrap());
+        let number = number.as_u64();
+        if let Some(block_num) = self.block_number {
+            match block_num {
+                BlockNumber::Number(t) if t.as_u64() > number => return Ok(KECCAK_EMPTY),
+                _ => (),
+            }
+        }
+        let number = wU64::from(number);
         let f = async {
             self.web3
                 .eth()
@@ -111,6 +123,6 @@ impl Database for Web3DB {
                 .ok()
                 .flatten()
         };
-        Ok(B256(self.block_on(f).unwrap().hash.unwrap().0))
+        Ok(H256(self.block_on(f).unwrap().hash.unwrap().0))
     }
 }

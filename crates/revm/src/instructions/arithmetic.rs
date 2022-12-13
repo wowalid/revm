@@ -1,59 +1,86 @@
+use crate::{gas, Interpreter, Return, Spec};
+
 use super::i256::{i256_div, i256_mod};
-use crate::{gas, Host, Interpreter, Return, Spec, U256};
+use core::{convert::TryInto, ops::Rem};
+use primitive_types::{U256, U512};
 
-pub fn wrapped_add(interpreter: &mut Interpreter, _host: &mut dyn Host) {
-    pop_top!(interpreter, op1, op2);
-    *op2 = op1.wrapping_add(*op2);
+pub fn div(op1: U256, op2: U256) -> U256 {
+    if op2.is_zero() {
+        U256::zero()
+    } else {
+        //op1 / op2
+        super::i256::div_u256::div_mod(op1, op2).0
+    }
 }
 
-pub fn wrapping_mul(interpreter: &mut Interpreter, _host: &mut dyn Host) {
-    pop_top!(interpreter, op1, op2);
-    *op2 = op1.wrapping_mul(*op2);
+pub fn sdiv(op1: U256, op2: U256) -> U256 {
+    i256_div(op1, op2)
 }
 
-pub fn wrapping_sub(interpreter: &mut Interpreter, _host: &mut dyn Host) {
-    pop_top!(interpreter, op1, op2);
-    *op2 = op1.wrapping_sub(*op2);
+pub fn rem(op1: U256, op2: U256) -> U256 {
+    if op2.is_zero() {
+        U256::zero()
+    } else {
+        op1.rem(op2)
+    }
 }
 
-pub fn div(interpreter: &mut Interpreter, _host: &mut dyn Host) {
-    pop_top!(interpreter, op1, op2);
-    *op2 = op1.checked_div(*op2).unwrap_or_default()
+pub fn smod(op1: U256, op2: U256) -> U256 {
+    if op2.is_zero() {
+        U256::zero()
+    } else {
+        i256_mod(op1, op2)
+    }
 }
 
-pub fn sdiv(interpreter: &mut Interpreter, _host: &mut dyn Host) {
-    pop_top!(interpreter, op1, op2);
-    *op2 = i256_div(op1, *op2);
+pub fn addmod(op1: U256, op2: U256, op3: U256) -> U256 {
+    if op3.is_zero() {
+        U256::zero()
+    } else {
+        let op1: U512 = op1.into();
+        let op2: U512 = op2.into();
+        let op3: U512 = op3.into();
+        let v = (op1 + op2) % op3;
+        v.try_into()
+            .expect("op3 is less than U256::MAX, thus it never overflows; qed")
+    }
 }
 
-pub fn rem(interpreter: &mut Interpreter, _host: &mut dyn Host) {
-    pop_top!(interpreter, op1, op2);
-    *op2 = op1.checked_rem(*op2).unwrap_or_default()
+pub fn mulmod(op1: U256, op2: U256, op3: U256) -> U256 {
+    if op3.is_zero() {
+        U256::zero()
+    } else {
+        let op1: U512 = op1.into();
+        let op2: U512 = op2.into();
+        let op3: U512 = op3.into();
+        let v = (op1 * op2) % op3;
+        v.try_into()
+            .expect("op3 is less than U256::MAX, thus it never overflows; qed")
+    }
 }
 
-pub fn smod(interpreter: &mut Interpreter, _host: &mut dyn Host) {
-    pop_top!(interpreter, op1, op2);
-    if *op2 != U256::ZERO {
-        *op2 = i256_mod(op1, *op2)
-    };
+pub fn exp(op1: U256, op2: U256) -> U256 {
+    let mut op1 = op1;
+    let mut op2 = op2;
+    let mut r: U256 = 1.into();
+
+    while op2 != 0.into() {
+        if op2 & 1.into() != 0.into() {
+            r = r.overflowing_mul(op1).0;
+        }
+        op2 >>= 1;
+        op1 = op1.overflowing_mul(op1).0;
+    }
+    r
 }
 
-pub fn addmod(interpreter: &mut Interpreter, _host: &mut dyn Host) {
-    pop_top!(interpreter, op1, op2, op3);
-    *op3 = op1.add_mod(op2, *op3)
-}
-
-pub fn mulmod(interpreter: &mut Interpreter, _host: &mut dyn Host) {
-    pop_top!(interpreter, op1, op2, op3);
-    *op3 = op1.mul_mod(op2, *op3)
-}
-
-pub fn eval_exp<SPEC: Spec>(interp: &mut Interpreter, _host: &mut dyn Host) {
+pub fn eval_exp<SPEC: Spec>(interp: &mut Interpreter) -> Return {
     pop!(interp, op1, op2);
     gas_or_fail!(interp, gas::exp_cost::<SPEC>(op2));
-    // TODO see if we can use pop_top
-    let ret = op1.pow(op2);
+    let ret = exp(op1, op2);
     push!(interp, ret);
+
+    Return::Continue
 }
 
 /// In the yellow paper `SIGNEXTEND` is defined to take two inputs, we will call them
@@ -71,13 +98,79 @@ pub fn eval_exp<SPEC: Spec>(interp: &mut Interpreter, _host: &mut dyn Host) {
 /// `y | !mask` where `|` is the bitwise `OR` and `!` is bitwise negation. Similarly, if
 /// `b == 0` then the yellow paper says the output should start with all zeros, then end with
 /// bits from `b`; this is equal to `y & mask` where `&` is bitwise `AND`.
-pub fn signextend(interpreter: &mut Interpreter, _host: &mut dyn Host) {
-    pop_top!(interpreter, op1, op2);
+
+pub fn signextend(op1: U256, op2: U256) -> U256 {
     if op1 < U256::from(32) {
         // `low_u32` works since op1 < 32
-        let bit_index = (8 * op1.as_limbs()[0] + 7) as usize;
+        let bit_index = (8 * op1.low_u32() + 7) as usize;
         let bit = op2.bit(bit_index);
-        let mask = (U256::from(1) << bit_index) - U256::from(1);
-        *op2 = if bit { *op2 | !mask } else { *op2 & mask };
+        let mask = (U256::one() << bit_index) - U256::one();
+        if bit {
+            op2 | !mask
+        } else {
+            op2 & mask
+        }
+    } else {
+        op2
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::vec;
+
+    use super::{signextend, U256};
+
+    /// Test to ensure new (optimized) `signextend` implementation is equivalent to the previous
+    /// implementation.
+    #[test]
+    fn test_signextend() {
+        let test_values = vec![
+            U256::zero(),
+            U256::one(),
+            U256::from(8),
+            U256::from(10),
+            U256::from(65),
+            U256::from(100),
+            U256::from(128),
+            U256::from(11) * (U256::one() << 65),
+            U256::from(7) * (U256::one() << 123),
+            U256::MAX / 167,
+            U256::MAX,
+        ];
+        for x in 0..64 {
+            for y in test_values.iter() {
+                compare_old_signextend(x.into(), *y);
+            }
+        }
+    }
+
+    fn compare_old_signextend(x: U256, y: U256) {
+        let old = old_signextend(x, y);
+        let new = signextend(x, y);
+
+        assert_eq!(old, new);
+    }
+
+    fn old_signextend(op1: U256, op2: U256) -> U256 {
+        if op1 > U256::from(32) {
+            op2
+        } else {
+            let mut ret = U256::zero();
+            let len: usize = op1.as_usize();
+            let t: usize = 8 * (len + 1) - 1;
+            let t_bit_mask = U256::one() << t;
+            let t_value = (op2 & t_bit_mask) >> t;
+            for i in 0..256 {
+                let bit_mask = U256::one() << i;
+                let i_value = (op2 & bit_mask) >> i;
+                if i <= t {
+                    ret = ret.overflowing_add(i_value << i).0;
+                } else {
+                    ret = ret.overflowing_add(t_value << i).0;
+                }
+            }
+            ret
+        }
     }
 }

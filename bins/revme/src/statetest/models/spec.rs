@@ -1,5 +1,5 @@
 use revm::SpecId;
-use serde::Deserialize;
+use serde_derive::*;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Hash, Ord, Deserialize)]
 pub enum SpecName {
@@ -11,22 +11,16 @@ pub enum SpecName {
     EIP150,
     EIP158, // EIP-161: State trie clearing
     EIP158ToByzantiumAt5,
-    Byzantium,
+    Byzantium,                    // done
     ByzantiumToConstantinopleAt5, // SKIPPED
     ByzantiumToConstantinopleFixAt5,
     Constantinople, // SKIPPED
     ConstantinopleFix,
     Istanbul,
-    Berlin,
-    BerlinToLondonAt5,
-    London,
-    Merge,
-    #[serde(alias = "Merge+3540+3670")]
-    MergeEOF,
-    #[serde(alias = "Merge+3860")]
-    MergeMeterInitCode,
-    #[serde(alias = "Merge+3855")]
-    MergePush0,
+    Berlin,            //done
+    BerlinToLondonAt5, // done
+    London,            // done
+    Merge,             //done
 }
 
 impl SpecName {
@@ -44,9 +38,6 @@ impl SpecName {
             Self::Berlin => SpecId::BERLIN,
             Self::London | Self::BerlinToLondonAt5 => SpecId::LONDON,
             Self::Merge => SpecId::MERGE,
-            Self::MergeEOF => SpecId::MERGE_EOF,
-            Self::MergeMeterInitCode => SpecId::MERGE_EOF,
-            Self::MergePush0 => SpecId::MERGE_EOF,
             Self::ByzantiumToConstantinopleAt5 | Self::Constantinople => {
                 panic!("Overriden with PETERSBURG")
             } //_ => panic!("Conversion failed"),

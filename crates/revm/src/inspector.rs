@@ -1,10 +1,11 @@
+use bytes::Bytes;
+use primitive_types::{H160, H256};
+
 use crate::{
-    bits::{B160, B256},
-    evm_impl::EVMData,
-    opcode, spec_opcode_gas, CallInputs, CreateInputs, Database, Gas, Interpreter, Return,
+    evm_impl::EVMData, opcode, spec_opcode_gas, CallInputs, CreateInputs, Database, Gas,
+    Interpreter, Return,
 };
 use auto_impl::auto_impl;
-use bytes::Bytes;
 
 #[auto_impl(&mut, Box)]
 pub trait Inspector<DB: Database> {
@@ -42,8 +43,8 @@ pub trait Inspector<DB: Database> {
     fn log(
         &mut self,
         _evm_data: &mut EVMData<'_, DB>,
-        _address: &B160,
-        _topics: &[B256],
+        _address: &H160,
+        _topics: &[H256],
         _data: &Bytes,
     ) {
     }
@@ -96,7 +97,7 @@ pub trait Inspector<DB: Database> {
         &mut self,
         _data: &mut EVMData<'_, DB>,
         _inputs: &mut CreateInputs,
-    ) -> (Return, Option<B160>, Gas, Bytes) {
+    ) -> (Return, Option<H160>, Gas, Bytes) {
         (Return::Continue, None, Gas::new(0), Bytes::default())
     }
 
@@ -109,10 +110,10 @@ pub trait Inspector<DB: Database> {
         _data: &mut EVMData<'_, DB>,
         _inputs: &CreateInputs,
         ret: Return,
-        address: Option<B160>,
+        address: Option<H160>,
         remaining_gas: Gas,
         out: Bytes,
-    ) -> (Return, Option<B160>, Gas, Bytes) {
+    ) -> (Return, Option<H160>, Gas, Bytes) {
         (ret, address, remaining_gas, out)
     }
 
@@ -202,12 +203,12 @@ impl<DB: Database> Inspector<DB> for GasInspector {
         } else if self.was_return {
             // we are ok to decrement PC by one as it is return of call
             let previous_pc = pc - 1;
-            self.reduced_gas_block = 0;
             self.full_gas_block = interp.contract.gas_block(previous_pc);
             self.was_return = false;
         }
-        self.gas_remaining =
-            interp.gas.remaining() + (self.full_gas_block - self.reduced_gas_block);
+
+        self.gas_remaining = interp.gas.remaining() + self.full_gas_block - self.reduced_gas_block;
+
         Return::Continue
     }
 
@@ -229,10 +230,10 @@ impl<DB: Database> Inspector<DB> for GasInspector {
         _data: &mut EVMData<'_, DB>,
         _inputs: &CreateInputs,
         ret: Return,
-        address: Option<B160>,
+        address: Option<H160>,
         remaining_gas: Gas,
         out: Bytes,
-    ) -> (Return, Option<B160>, Gas, Bytes) {
+    ) -> (Return, Option<H160>, Gas, Bytes) {
         self.was_return = true;
         (ret, address, remaining_gas, out)
     }
@@ -243,10 +244,11 @@ mod tests {
     use crate::db::BenchmarkDB;
     use crate::{
         opcode, Bytecode, CallInputs, CreateInputs, Database, EVMData, Gas, GasInspector,
-        Inspector, Interpreter, OpCode, Return, TransactTo, B160, B256,
+        Inspector, Interpreter, OpCode, Return, TransactTo,
     };
     use bytes::Bytes;
-    use hex_literal::hex;
+    use core::str::FromStr;
+    use primitive_types::{H160, H256};
 
     #[derive(Default, Debug)]
     struct StackInspector {
@@ -281,8 +283,8 @@ mod tests {
         fn log(
             &mut self,
             evm_data: &mut EVMData<'_, DB>,
-            address: &B160,
-            topics: &[B256],
+            address: &H160,
+            topics: &[H256],
             data: &Bytes,
         ) {
             self.gas_inspector.log(evm_data, address, topics, data);
@@ -330,7 +332,7 @@ mod tests {
             &mut self,
             data: &mut EVMData<'_, DB>,
             call: &mut CreateInputs,
-        ) -> (Return, Option<B160>, Gas, Bytes) {
+        ) -> (Return, Option<H160>, Gas, Bytes) {
             self.gas_inspector.create(data, call);
 
             (
@@ -346,10 +348,10 @@ mod tests {
             data: &mut EVMData<'_, DB>,
             inputs: &CreateInputs,
             status: Return,
-            address: Option<B160>,
+            address: Option<H160>,
             gas: Gas,
             retdata: Bytes,
-        ) -> (Return, Option<B160>, Gas, Bytes) {
+        ) -> (Return, Option<H160>, Gas, Bytes) {
             self.gas_inspector
                 .create_end(data, inputs, status, address, gas, retdata.clone());
             (status, address, gas, retdata)
@@ -377,9 +379,9 @@ mod tests {
 
         let mut evm = crate::new();
         evm.database(BenchmarkDB::new_bytecode(bytecode.clone()));
-        evm.env.tx.caller = B160(hex!("1000000000000000000000000000000000000000"));
+        evm.env.tx.caller = H160::from_str("0x1000000000000000000000000000000000000000").unwrap();
         evm.env.tx.transact_to =
-            TransactTo::Call(B160(hex!("0000000000000000000000000000000000000000")));
+            TransactTo::Call(H160::from_str("0x0000000000000000000000000000000000000000").unwrap());
         evm.env.tx.gas_limit = 21100;
 
         let mut inspector = StackInspector::default();

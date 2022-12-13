@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
 use bytes::Bytes;
-use revm::{B160, U256};
+use primitive_types::{H160, U256};
 use serde::{
     de::{self, Error},
     Deserialize,
@@ -27,7 +27,12 @@ where
     D: de::Deserializer<'de>,
 {
     let string = String::deserialize(deserializer)?;
-    let output = string.parse().unwrap();
+
+    let output = if let Some(stripped) = string.strip_prefix("0x") {
+        U256::from_str_radix(stripped, 16).unwrap()
+    } else {
+        U256::from_dec_str(&string).unwrap()
+    };
 
     Ok(output)
 }
@@ -49,7 +54,7 @@ where
     Ok(out)
 }
 
-pub fn deserialize_maybe_empty<'de, D>(deserializer: D) -> Result<Option<B160>, D::Error>
+pub fn deserialize_maybe_empty<'de, D>(deserializer: D) -> Result<Option<H160>, D::Error>
 where
     D: de::Deserializer<'de>,
 {
@@ -57,7 +62,7 @@ where
     if string.is_empty() {
         return Ok(None);
     }
-    Ok(Some(B160::from_str(&string).map_err(D::Error::custom)?))
+    Ok(Some(H160::from_str(&string).map_err(D::Error::custom)?))
 }
 
 pub fn deserialize_str_as_bytes<'de, D>(deserializer: D) -> Result<Bytes, D::Error>

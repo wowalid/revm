@@ -25,8 +25,7 @@ pub enum SpecId {
     ARROW_GLACIER = 13,   // Arrow Glacier	        13773000
     GRAY_GLACIER = 14,    // Gray Glacier	        15050000
     MERGE = 15,           // Paris/Merge	        TBD (Depends on difficulty)
-    MERGE_EOF = 16,       // Merge+EOF	            TBD
-    LATEST = 17,
+    LATEST = 16,
 }
 
 impl SpecId {
@@ -37,9 +36,7 @@ impl SpecId {
             }
             BYZANTIUM | CONSTANTINOPLE | PETERSBURG => PrecompileId::BYZANTIUM,
             ISTANBUL | MUIR_GLACIER => PrecompileId::ISTANBUL,
-            BERLIN | LONDON | ARROW_GLACIER | GRAY_GLACIER | MERGE | MERGE_EOF | LATEST => {
-                PrecompileId::BERLIN
-            }
+            BERLIN | LONDON | ARROW_GLACIER | GRAY_GLACIER | MERGE | LATEST => PrecompileId::BERLIN,
         }
     }
 
@@ -65,7 +62,6 @@ impl From<&str> for SpecId {
             "Berlin" => SpecId::BERLIN,
             "London" => SpecId::LONDON,
             "Merge" => SpecId::MERGE,
-            "MergeEOF" => SpecId::MERGE_EOF,
             _ => SpecId::LATEST,
         }
     }
@@ -78,27 +74,54 @@ impl SpecId {
     }
 }
 
+pub(crate) trait NotStaticSpec {}
+
 pub trait Spec: Sized {
+    /// little bit of magic. We can have child version of Spec that contains static flag enabled
+    type STATIC: Spec;
+
     #[inline(always)]
     fn enabled(spec_id: SpecId) -> bool {
         Self::SPEC_ID as u8 >= spec_id as u8
     }
     const SPEC_ID: SpecId;
+    /// static flag used in STATIC type;
+    const IS_STATIC_CALL: bool;
+
+    const ASSUME_PRECOMPILE_HAS_BALANCE: bool;
 }
 
 pub(crate) mod spec_impl {
+    use super::{NotStaticSpec, Spec};
 
     macro_rules! spec {
         ($spec_id:tt) => {
             #[allow(non_snake_case)]
             pub mod $spec_id {
-                use crate::{Spec, SpecId};
+                use super::{NotStaticSpec, Spec};
+                use crate::SpecId;
 
-                pub struct SpecImpl {}
+                pub struct SpecInner<
+                    const STATIC_CALL: bool,
+                    const ASSUME_PRECOMPILE_HAS_BALANCE: bool,
+                >;
 
-                impl Spec for SpecImpl {
+                pub type SpecImpl = SpecInner<false, true>;
+                pub type SpecStaticImpl = SpecInner<true, true>;
+
+                impl NotStaticSpec for SpecImpl {}
+
+                impl<const IS_STATIC_CALL: bool, const ASSUME_PRECOMPILE_HAS_BALANCE: bool> Spec
+                    for SpecInner<IS_STATIC_CALL, ASSUME_PRECOMPILE_HAS_BALANCE>
+                {
+                    type STATIC = SpecInner<true, ASSUME_PRECOMPILE_HAS_BALANCE>;
+
                     //specification id
                     const SPEC_ID: SpecId = SpecId::$spec_id;
+
+                    const IS_STATIC_CALL: bool = IS_STATIC_CALL;
+
+                    const ASSUME_PRECOMPILE_HAS_BALANCE: bool = ASSUME_PRECOMPILE_HAS_BALANCE;
                 }
             }
         };

@@ -1,4 +1,5 @@
-use crate::{alloc::vec::Vec, Return, B256, U256};
+use crate::{alloc::vec::Vec, Return};
+use primitive_types::{H256, U256};
 
 pub const STACK_LIMIT: usize = 1024;
 
@@ -60,16 +61,15 @@ impl Stack {
         &self.data
     }
 
-    #[inline(always)]
-    pub fn reduce_one(&mut self) -> Option<Return> {
+    pub fn reduce_one(&mut self) -> Return {
         let len = self.data.len();
         if len < 1 {
-            return Some(Return::StackUnderflow);
+            return Return::StackUnderflow;
         }
         unsafe {
             self.data.set_len(len - 1);
         }
-        None
+        Return::Continue
     }
 
     #[inline]
@@ -181,11 +181,11 @@ impl Stack {
     #[inline]
     /// Push a new value into the stack. If it will exceed the stack limit,
     /// returns `StackOverflow` error and leaves the stack unchanged.
-    pub fn push_b256(&mut self, value: B256) -> Result<(), Return> {
+    pub fn push_h256(&mut self, value: H256) -> Result<(), Return> {
         if self.data.len() + 1 > STACK_LIMIT {
             return Err(Return::StackOverflow);
         }
-        self.data.push(U256::from_be_bytes(value.0));
+        self.data.push(U256::from_big_endian(value.as_ref()));
         Ok(())
     }
 
@@ -213,27 +213,27 @@ impl Stack {
     }
 
     #[inline(always)]
-    pub fn dup<const N: usize>(&mut self) -> Option<Return> {
+    pub fn dup<const N: usize>(&mut self) -> Return {
         let len = self.data.len();
         if len < N {
-            Some(Return::StackUnderflow)
+            Return::StackUnderflow
         } else if len + 1 > STACK_LIMIT {
-            Some(Return::StackOverflow)
+            Return::StackOverflow
         } else {
             // Safety: check for out of bounds is done above and it makes this safe to do.
             unsafe {
                 *self.data.get_unchecked_mut(len) = *self.data.get_unchecked(len - N);
                 self.data.set_len(len + 1);
             }
-            None
+            Return::Continue
         }
     }
 
     #[inline(always)]
-    pub fn swap<const N: usize>(&mut self) -> Option<Return> {
+    pub fn swap<const N: usize>(&mut self) -> Return {
         let len = self.data.len();
         if len <= N {
-            return Some(Return::StackUnderflow);
+            return Return::StackUnderflow;
         }
         // Safety: length is checked before so we are okay to switch bytes in unsafe way.
         unsafe {
@@ -241,15 +241,15 @@ impl Stack {
             let pb: *mut U256 = self.data.get_unchecked_mut(len - 1 - N);
             core::ptr::swap(pa, pb);
         }
-        None
+        Return::Continue
     }
 
-    /// push slice onto memory it is expected to be max 32 bytes and be contains inside B256
+    /// push slice onto memory it is expected to be max 32 bytes and be contains inside H256
     #[inline(always)]
-    pub fn push_slice<const N: usize>(&mut self, slice: &[u8]) -> Option<Return> {
+    pub fn push_slice<const N: usize>(&mut self, slice: &[u8]) -> Return {
         let new_len = self.data.len() + 1;
         if new_len > STACK_LIMIT {
-            return Some(Return::StackOverflow);
+            return Return::StackOverflow;
         }
 
         let slot;
@@ -259,42 +259,37 @@ impl Stack {
             slot = self.data.get_unchecked_mut(new_len - 1);
         }
 
-        unsafe {
-            *slot.as_limbs_mut() = [0u64; 4];
-            let mut dangling = [0u8; 8];
-            if N < 8 {
-                dangling[8 - N..].copy_from_slice(slice);
-                slot.as_limbs_mut()[0] = u64::from_be_bytes(dangling);
-            } else if N < 16 {
-                slot.as_limbs_mut()[0] = u64::from_be_bytes(*arrayref::array_ref!(slice, N - 8, 8));
-                if N != 8 {
-                    dangling[8 * 2 - N..].copy_from_slice(&slice[..N - 8]);
-                    slot.as_limbs_mut()[1] = u64::from_be_bytes(dangling);
-                }
-            } else if N < 24 {
-                slot.as_limbs_mut()[0] = u64::from_be_bytes(*arrayref::array_ref!(slice, N - 8, 8));
-                slot.as_limbs_mut()[1] =
-                    u64::from_be_bytes(*arrayref::array_ref!(slice, N - 16, 8));
-                if N != 16 {
-                    dangling[8 * 3 - N..].copy_from_slice(&slice[..N - 16]);
-                    slot.as_limbs_mut()[2] = u64::from_be_bytes(dangling);
-                }
-            } else {
-                // M<32
-                slot.as_limbs_mut()[0] = u64::from_be_bytes(*arrayref::array_ref!(slice, N - 8, 8));
-                slot.as_limbs_mut()[1] =
-                    u64::from_be_bytes(*arrayref::array_ref!(slice, N - 16, 8));
-                slot.as_limbs_mut()[2] =
-                    u64::from_be_bytes(*arrayref::array_ref!(slice, N - 24, 8));
-                if N == 32 {
-                    slot.as_limbs_mut()[3] = u64::from_be_bytes(*arrayref::array_ref!(slice, 0, 8));
-                } else if N != 24 {
-                    dangling[8 * 4 - N..].copy_from_slice(&slice[..N - 24]);
-                    slot.as_limbs_mut()[3] = u64::from_be_bytes(dangling);
-                }
+        slot.0 = [0u64; 4];
+        let mut dangling = [0u8; 8];
+        if N < 8 {
+            dangling[8 - N..].copy_from_slice(slice);
+            slot.0[0] = u64::from_be_bytes(dangling);
+        } else if N < 16 {
+            slot.0[0] = u64::from_be_bytes(*arrayref::array_ref!(slice, N - 8, 8));
+            if N != 8 {
+                dangling[8 * 2 - N..].copy_from_slice(&slice[..N - 8]);
+                slot.0[1] = u64::from_be_bytes(dangling);
+            }
+        } else if N < 24 {
+            slot.0[0] = u64::from_be_bytes(*arrayref::array_ref!(slice, N - 8, 8));
+            slot.0[1] = u64::from_be_bytes(*arrayref::array_ref!(slice, N - 16, 8));
+            if N != 16 {
+                dangling[8 * 3 - N..].copy_from_slice(&slice[..N - 16]);
+                slot.0[2] = u64::from_be_bytes(dangling);
+            }
+        } else {
+            // M<32
+            slot.0[0] = u64::from_be_bytes(*arrayref::array_ref!(slice, N - 8, 8));
+            slot.0[1] = u64::from_be_bytes(*arrayref::array_ref!(slice, N - 16, 8));
+            slot.0[2] = u64::from_be_bytes(*arrayref::array_ref!(slice, N - 24, 8));
+            if N == 32 {
+                slot.0[3] = u64::from_be_bytes(*arrayref::array_ref!(slice, 0, 8));
+            } else if N != 24 {
+                dangling[8 * 4 - N..].copy_from_slice(&slice[..N - 24]);
+                slot.0[3] = u64::from_be_bytes(dangling);
             }
         }
-        None
+        Return::Continue
     }
 
     #[inline]

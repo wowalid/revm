@@ -1,11 +1,13 @@
-use crate::{Error, Precompile, PrecompileAddress, PrecompileResult, StandardPrecompileFn};
+use crate::{gas_query, Precompile, PrecompileOutput, PrecompileResult, StandardPrecompileFn};
 use alloc::vec::Vec;
 use core::cmp::min;
 
+use primitive_types::{H160 as Address, H256};
+
 const ECRECOVER_BASE: u64 = 3_000;
 
-pub const ECRECOVER: PrecompileAddress = PrecompileAddress(
-    crate::u64_to_b160(1),
+pub const ECRECOVER: (Address, Precompile) = (
+    super::make_address(0, 1),
     Precompile::Standard(ec_recover_run as StandardPrecompileFn),
 );
 
@@ -18,51 +20,47 @@ mod secp256k1 {
         elliptic_curve::sec1::ToEncodedPoint,
         PublicKey as K256PublicKey,
     };
+    use primitive_types::H160 as Address;
     use sha3::{Digest, Keccak256};
 
-    use crate::B256;
-
-    pub fn ecrecover(sig: &[u8; 65], msg: &B256) -> Result<B256, Error> {
+    pub fn ecrecover(sig: &[u8; 65], msg: &[u8; 32]) -> Result<Address, Error> {
         let sig = recoverable::Signature::try_from(sig.as_ref())?;
         let verify_key = sig.recover_verifying_key_from_digest_bytes(msg.into())?;
         let public_key = K256PublicKey::from(&verify_key);
         let public_key = public_key.to_encoded_point(/* compress = */ false);
         let public_key = public_key.as_bytes();
         let hash = Keccak256::digest(&public_key[1..]);
-        let mut hash: B256 = hash[..].try_into().unwrap();
-        hash.iter_mut().take(12).for_each(|i| *i = 0);
-        Ok(hash)
+        let mut address = Address::zero();
+        address.as_bytes_mut().copy_from_slice(&hash[12..]);
+        Ok(address)
     }
 }
 
 #[cfg(all(not(feature = "k256_ecrecover"), feature = "secp256k1"))]
 #[allow(clippy::module_inception)]
 mod secp256k1 {
-    use crate::B256;
+    use primitive_types::H160 as Address;
     use secp256k1::{
         ecdsa::{RecoverableSignature, RecoveryId},
         Message, Secp256k1,
     };
     use sha3::{Digest, Keccak256};
 
-    pub fn ecrecover(sig: &[u8; 65], msg: &B256) -> Result<B256, secp256k1::Error> {
+    pub fn ecrecover(sig: &[u8; 65], msg: &[u8; 32]) -> Result<Address, secp256k1::Error> {
         let sig =
             RecoverableSignature::from_compact(&sig[0..64], RecoveryId::from_i32(sig[64] as i32)?)?;
 
         let secp = Secp256k1::new();
         let public = secp.recover_ecdsa(&Message::from_slice(&msg[..32])?, &sig)?;
 
-        let hash = Keccak256::digest(&public.serialize_uncompressed()[1..]);
-        let mut hash: B256 = hash[..].try_into().unwrap();
-        hash.iter_mut().take(12).for_each(|i| *i = 0);
-        Ok(hash)
+        let mut out = vec![0; 20];
+        out.copy_from_slice(&Keccak256::digest(&public.serialize_uncompressed()[1..])[12..]);
+        Ok(Address::from_slice(&out))
     }
 }
 
 fn ec_recover_run(i: &[u8], target_gas: u64) -> PrecompileResult {
-    if ECRECOVER_BASE > target_gas {
-        return Err(Error::OutOfGas);
-    }
+    let cost = gas_query(ECRECOVER_BASE, target_gas)?;
     let mut input = [0u8; 128];
     input[..min(i.len(), 128)].copy_from_slice(&i[..min(i.len(), 128)]);
 
@@ -74,14 +72,15 @@ fn ec_recover_run(i: &[u8], target_gas: u64) -> PrecompileResult {
     sig[32..64].copy_from_slice(&input[96..128]);
 
     if input[32..63] != [0u8; 31] || !matches!(input[63], 27 | 28) {
-        return Ok((ECRECOVER_BASE, Vec::new()));
+        return Ok(PrecompileOutput::without_logs(cost, Vec::new()));
     }
 
     sig[64] = input[63] - 27;
 
-    let out = secp256k1::ecrecover(&sig, &msg)
-        .map(Vec::from)
-        .unwrap_or_default();
+    let out = match secp256k1::ecrecover(&sig, &msg) {
+        Ok(out) => H256::from(out).as_bytes().to_vec(),
+        Err(_) => Vec::new(),
+    };
 
-    Ok((ECRECOVER_BASE, out))
+    Ok(PrecompileOutput::without_logs(cost, out))
 }

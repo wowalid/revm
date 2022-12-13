@@ -1,5 +1,6 @@
 use super::constants::*;
-use crate::{models::SelfDestructResult, Spec, SpecId::*, U256};
+use crate::{models::SelfDestructResult, Spec, SpecId::*};
+use primitive_types::U256;
 
 #[allow(clippy::collapsible_else_if)]
 pub fn sstore_refund<SPEC: Spec>(original: U256, current: U256, new: U256) -> i64 {
@@ -13,15 +14,15 @@ pub fn sstore_refund<SPEC: Spec>(original: U256, current: U256, new: U256) -> i6
         if current == new {
             0
         } else {
-            if original == current && new == U256::ZERO {
+            if original == current && new.is_zero() {
                 sstore_clears_schedule
             } else {
                 let mut refund = 0;
 
-                if original != U256::ZERO {
-                    if current == U256::ZERO {
+                if !original.is_zero() {
+                    if current.is_zero() {
                         refund -= sstore_clears_schedule;
-                    } else if new == U256::ZERO {
+                    } else if new.is_zero() {
                         refund += sstore_clears_schedule;
                     }
                 }
@@ -32,7 +33,7 @@ pub fn sstore_refund<SPEC: Spec>(original: U256, current: U256, new: U256) -> i6
                     } else {
                         (SSTORE_RESET, sload_cost::<SPEC>(false))
                     };
-                    if original == U256::ZERO {
+                    if original.is_zero() {
                         refund += (SSTORE_SET - gas_sload) as i64;
                     } else {
                         refund += (gas_sstore_reset - gas_sload) as i64;
@@ -43,7 +44,7 @@ pub fn sstore_refund<SPEC: Spec>(original: U256, current: U256, new: U256) -> i6
             }
         }
     } else {
-        if current != U256::ZERO && new == U256::ZERO {
+        if !current.is_zero() && new.is_zero() {
             REFUND_SSTORE_CLEARS
         } else {
             0
@@ -63,14 +64,14 @@ pub fn create2_cost(len: usize) -> Option<u64> {
 }
 
 fn log2floor(value: U256) -> u64 {
-    assert!(value != U256::ZERO);
+    assert!(!value.is_zero());
     let mut l: u64 = 256;
     for i in 0..4 {
         let i = 3 - i;
-        if value.as_limbs()[i] == 0u64 {
+        if value.0[i] == 0u64 {
             l -= 64;
         } else {
-            l -= value.as_limbs()[i].leading_zeros() as u64;
+            l -= value.0[i].leading_zeros() as u64;
             if l == 0 {
                 return l;
             } else {
@@ -82,7 +83,7 @@ fn log2floor(value: U256) -> u64 {
 }
 
 pub fn exp_cost<SPEC: Spec>(power: U256) -> Option<u64> {
-    if power == U256::ZERO {
+    if power.is_zero() {
         Some(EXP)
     } else {
         let gas_byte = U256::from(if SPEC::enabled(SPURIOUS_DRAGON) {
@@ -93,7 +94,11 @@ pub fn exp_cost<SPEC: Spec>(power: U256) -> Option<u64> {
         let gas = U256::from(EXP)
             .checked_add(gas_byte.checked_mul(U256::from(log2floor(power) / 8 + 1))?)?;
 
-        u64::try_from(gas).ok()
+        if gas > U256::from(u64::MAX) {
+            return None;
+        }
+
+        Some(gas.as_u64())
     }
 }
 
@@ -187,7 +192,7 @@ pub fn sstore_cost<SPEC: Spec>(
             gas_sload
         } else {
             if original == current {
-                if original == U256::ZERO {
+                if original.is_zero() {
                     SSTORE_SET
                 } else {
                     gas_sstore_reset
@@ -197,7 +202,7 @@ pub fn sstore_cost<SPEC: Spec>(
             }
         }
     } else {
-        if current == U256::ZERO && new != U256::ZERO {
+        if current.is_zero() && !new.is_zero() {
             SSTORE_SET
         } else {
             gas_sstore_reset

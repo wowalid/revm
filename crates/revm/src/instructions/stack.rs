@@ -1,37 +1,28 @@
-use crate::{interpreter::Interpreter, Host};
+use crate::{interpreter::Interpreter, Return};
 
-pub fn pop(interpreter: &mut Interpreter, _host: &mut dyn Host) {
+pub fn pop(interp: &mut Interpreter) -> Return {
     // gas!(interp, gas::BASE);
-    if let Some(ret) = interpreter.stack.reduce_one() {
-        interpreter.instruction_result = ret;
-    }
+    interp.stack.reduce_one()
 }
 
-pub fn push<const N: usize>(interpreter: &mut Interpreter, _host: &mut dyn Host) {
+pub fn push<const N: usize>(interp: &mut Interpreter) -> Return {
     // gas!(interp, gas::VERYLOW);
-    let start = interpreter.instruction_pointer;
+    let start = interp.instruction_pointer;
     // Safety: In Analysis we appended needed bytes for bytecode so that we are safe to just add without
     // checking if it is out of bound. This makes both of our unsafes block safe to do.
-    if let Some(ret) = interpreter
+    let ret = interp
         .stack
-        .push_slice::<N>(unsafe { core::slice::from_raw_parts(start, N) })
-    {
-        interpreter.instruction_result = ret;
-        return;
-    }
-    interpreter.instruction_pointer = unsafe { interpreter.instruction_pointer.add(N) };
+        .push_slice::<N>(unsafe { core::slice::from_raw_parts(start, N) });
+    interp.instruction_pointer = unsafe { interp.instruction_pointer.add(N) };
+    ret
 }
 
-pub fn dup<const N: usize>(interpreter: &mut Interpreter, _host: &mut dyn Host) {
+pub fn dup<const N: usize>(interp: &mut Interpreter) -> Return {
     // gas!(interp, gas::VERYLOW);
-    if let Some(ret) = interpreter.stack.dup::<N>() {
-        interpreter.instruction_result = ret;
-    }
+    interp.stack.dup::<N>()
 }
 
-pub fn swap<const N: usize>(interpreter: &mut Interpreter, _host: &mut dyn Host) {
+pub fn swap<const N: usize>(interp: &mut Interpreter) -> Return {
     // gas!(interp, gas::VERYLOW);
-    if let Some(ret) = interpreter.stack.swap::<N>() {
-        interpreter.instruction_result = ret;
-    }
+    interp.stack.swap::<N>()
 }
