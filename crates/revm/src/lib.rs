@@ -7,7 +7,7 @@ mod evm_impl;
 pub(crate) mod gas;
 mod inspector;
 mod instructions;
-mod interpreter;
+pub mod interpreter;
 mod journaled_state;
 mod models;
 mod specification;
