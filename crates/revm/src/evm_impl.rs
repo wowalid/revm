@@ -47,10 +47,8 @@ impl<'a, GSPEC: Spec, DB: Database, const INSPECT: bool> Transact
         let data = self.data.env.tx.data.clone();
         let gas_limit = self.data.env.tx.gas_limit;
 
-        println!("Start 1");
         let exit = |reason: Return| (ExecutionResult::new_with_reason(reason), State::new());
 
-        println!("Start 2");
         if GSPEC::enabled(LONDON) {
             if let Some(priority_fee) = self.data.env.tx.gas_priority_fee {
                 if priority_fee > self.data.env.tx.gas_price {
@@ -70,18 +68,17 @@ impl<'a, GSPEC: Spec, DB: Database, const INSPECT: bool> Transact
             // check if priority fee is lower then max fee
         }
 
-        println!("Start 3");
         // unusual to be found here, but check if gas_limit is more then block_gas_limit
         if U256::from(gas_limit) > self.data.env.block.gas_limit {
             return exit(Return::CallerGasLimitMoreThenBlock);
         }
-        println!("Start 4");
+
         let mut gas = Gas::new(gas_limit);
         // record initial gas cost. if not using gas metering init will return 0
         if !gas.record_cost(self.initialization::<GSPEC>()) {
             return exit(Return::OutOfGas);
         }
-        println!("Start 5");
+
         // load acc
         if self
             .data
@@ -91,7 +88,7 @@ impl<'a, GSPEC: Spec, DB: Database, const INSPECT: bool> Transact
         {
             return exit(Return::FatalExternalError);
         }
-        println!("Start 6");
+
         // substract gas_limit*gas_price from current account.
         if let Some(payment_value) =
             U256::from(gas_limit).checked_mul(self.data.env.effective_gas_price())
@@ -111,23 +108,22 @@ impl<'a, GSPEC: Spec, DB: Database, const INSPECT: bool> Transact
         } else {
             return exit(Return::OverflowPayment);
         }
-        println!("Start 7");
+
         // check if we have enought balance for value transfer.
         let difference = self.data.env.tx.gas_price - self.data.env.effective_gas_price();
         if difference + value > self.data.journaled_state.account(caller).info.balance {
             return exit(Return::OutOfFund);
         }
-        println!("Start 8");
+
         // record all as cost;
         let gas_limit = gas.remaining();
         if crate::USE_GAS {
             gas.record_cost(gas_limit);
         }
-        println!("Start 9");
+
         // call inner handling of call/create
         let (exit_reason, ret_gas, out) = match self.data.env.tx.transact_to {
             TransactTo::Call(address) => {
-                println!("Start 10");
                 if self.data.journaled_state.inc_nonce(caller).is_none() {
                     // overflow
                     return exit(Return::NonceOverflow);
@@ -150,7 +146,7 @@ impl<'a, GSPEC: Spec, DB: Database, const INSPECT: bool> Transact
                     gas_limit,
                     context,
                 };
-                println!("Start 11");
+
                 let (exit, gas, bytes) = self.call_inner::<GSPEC>(&mut call_input);
                 (exit, gas, TransactOut::Call(bytes))
             }
@@ -166,7 +162,7 @@ impl<'a, GSPEC: Spec, DB: Database, const INSPECT: bool> Transact
                 (exit, ret_gas, TransactOut::Create(bytes, address))
             }
         };
-        println!("Start 13");
+
         if crate::USE_GAS {
             match exit_reason {
                 return_ok!() => {
@@ -179,7 +175,7 @@ impl<'a, GSPEC: Spec, DB: Database, const INSPECT: bool> Transact
                 _ => {}
             }
         }
-        println!("Start 12");
+
         let (state, logs, gas_used, gas_refunded) = self.finalize::<GSPEC>(caller, &gas);
         (
             ExecutionResult {
